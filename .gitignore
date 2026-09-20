@@ -1,0 +1,27 @@
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+
+# Local configuration
+.DS_Store
+.vscode/
+
+# Frontend dependencies and builds
+node_modules/
+dist/
+build/
+
+# Logs
+*.log
+
+# Local generated files
+*.sqlite3

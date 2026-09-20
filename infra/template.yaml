@@ -1,0 +1,282 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  FundWatch — evidence-first mutual fund disclosure intelligence platform.
+  Lean serverless stack per spec section 14: S3, API Gateway, Lambda,
+  Step Functions, Textract, Bedrock, DynamoDB. No Redis/Kafka/vector DB/
+  ECS/Kubernetes — none of that is needed for this MVP.
+
+Globals:
+  Function:
+    Runtime: python3.12
+    Timeout: 60
+    MemorySize: 512
+    Environment:
+      Variables:
+        FUNDWATCH_BUCKET: !Ref FundWatchBucket
+        FUNDWATCH_TABLE: !Ref FundWatchTable
+        BEDROCK_MODEL_ID: global.anthropic.claude-sonnet-4-6
+        AWS_REGION: !Ref AWS::Region
+
+Parameters:
+  Stage:
+    Type: String
+    Default: dev
+
+Resources:
+
+  # ---- Storage --------------------------------------------------------
+  FundWatchBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireTempUploads
+            Prefix: uploads/
+            Status: Enabled
+            ExpirationInDays: 30
+      CorsConfiguration:
+        CorsRules:
+          - AllowedMethods: [GET, PUT, POST]
+            AllowedOrigins: ["*"]
+            AllowedHeaders: ["*"]
+
+  FundWatchTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: scan_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: scan_id
+          KeyType: HASH
+      SSESpecification:
+        SSEEnabled: true
+
+  # ---- API -------------------------------------------------------------
+  FundWatchApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: !Ref Stage
+      Cors:
+        AllowMethods: "'GET,POST,OPTIONS'"
+        AllowHeaders: "'Content-Type,Authorization'"
+        AllowOrigin: "'*'"
+
+  PresignFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: lambda_handlers.presign_handler.handler
+      CodeUri: ../backend/
+      Policies:
+        - S3WritePolicy:
+            BucketName: !Ref FundWatchBucket
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            RestApiId: !Ref FundWatchApi
+            Path: /uploads/presign
+            Method: post
+
+  UploadFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: lambda_handlers.upload_handler.handler
+      CodeUri: ../backend/
+      Environment:
+        Variables:
+          FUNDWATCH_BUCKET: !Ref FundWatchBucket
+          FUNDWATCH_TABLE: !Ref FundWatchTable
+          STATE_MACHINE_ARN: !Ref FundWatchStateMachine
+      Policies:
+        - S3ReadPolicy:
+            BucketName: !Ref FundWatchBucket
+        - DynamoDBWritePolicy:
+            TableName: !Ref FundWatchTable
+        - StepFunctionsExecutionPolicy:
+            StateMachineName: !GetAtt FundWatchStateMachine.Name
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            RestApiId: !Ref FundWatchApi
+            Path: /analyze
+            Method: post
+
+  GetScanFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: lambda_handlers.get_scan_handler.handler
+      CodeUri: ../backend/
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref FundWatchTable
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            RestApiId: !Ref FundWatchApi
+            Path: /scans/{scan_id}
+            Method: get
+
+  ChatFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: lambda_handlers.chat_handler.handler
+      CodeUri: ../backend/
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref FundWatchTable
+        - Statement:
+            - Effect: Allow
+              Action: bedrock:InvokeModel
+              Resource: "*"
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            RestApiId: !Ref FundWatchApi
+            Path: /scans/{scan_id}/chat
+            Method: post
+
+  # ---- Step Functions workflow steps -----------------------------------
+  StatusFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: lambda_handlers.status_handler.handler
+      CodeUri: ../backend/
+      Policies:
+        - DynamoDBWritePolicy:
+            TableName: !Ref FundWatchTable
+
+  ExtractFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: lambda_handlers.extract_handler.handler
+      CodeUri: ../backend/
+      Timeout: 120
+      MemorySize: 1024
+      Policies:
+        - S3CrudPolicy:
+            BucketName: !Ref FundWatchBucket
+        - Statement:
+            - Effect: Allow
+              Action:
+                - textract:StartDocumentAnalysis
+                - textract:GetDocumentAnalysis
+              Resource: "*"
+
+  NormalizeFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: lambda_handlers.normalize_handler.handler
+      CodeUri: ../backend/
+      Policies:
+        - S3CrudPolicy:
+            BucketName: !Ref FundWatchBucket
+
+  ValidateFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: lambda_handlers.validate_handler.handler
+      CodeUri: ../backend/
+      Policies:
+        - S3ReadPolicy:
+            BucketName: !Ref FundWatchBucket
+
+  CompareFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: lambda_handlers.compare_handler.handler
+      CodeUri: ../backend/
+      Policies:
+        - S3CrudPolicy:
+            BucketName: !Ref FundWatchBucket
+
+  ExplainFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: lambda_handlers.explain_handler.handler
+      CodeUri: ../backend/
+      Timeout: 120
+      Policies:
+        - S3CrudPolicy:
+            BucketName: !Ref FundWatchBucket
+        - Statement:
+            - Effect: Allow
+              Action: bedrock:InvokeModel
+              Resource: "*"
+
+  BriefFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: lambda_handlers.brief_handler.handler
+      CodeUri: ../backend/
+      Timeout: 120
+      Policies:
+        - S3CrudPolicy:
+            BucketName: !Ref FundWatchBucket
+        - DynamoDBCrudPolicy:
+            TableName: !Ref FundWatchTable
+        - Statement:
+            - Effect: Allow
+              Action: bedrock:InvokeModel
+              Resource: "*"
+
+  # ---- Step Functions state machine -------------------------------------
+  StepFunctionsExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: states.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: InvokeStepFunctions
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource:
+                  - !GetAtt ExtractFunction.Arn
+                  - !GetAtt NormalizeFunction.Arn
+                  - !GetAtt ValidateFunction.Arn
+                  - !GetAtt CompareFunction.Arn
+                  - !GetAtt ExplainFunction.Arn
+                  - !GetAtt BriefFunction.Arn
+                  - !GetAtt StatusFunction.Arn
+
+  FundWatchStateMachine:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      DefinitionUri: statemachine.asl.json
+      DefinitionSubstitutions:
+        ExtractFunctionArn: !GetAtt ExtractFunction.Arn
+        NormalizeFunctionArn: !GetAtt NormalizeFunction.Arn
+        ValidateFunctionArn: !GetAtt ValidateFunction.Arn
+        CompareFunctionArn: !GetAtt CompareFunction.Arn
+        ExplainFunctionArn: !GetAtt ExplainFunction.Arn
+        BriefFunctionArn: !GetAtt BriefFunction.Arn
+        StatusFunctionArn: !GetAtt StatusFunction.Arn
+      RoleArn: !GetAtt StepFunctionsExecutionRole.Arn
+
+Outputs:
+  ApiUrl:
+    Description: Base URL for the FundWatch API
+    Value: !Sub "https://${FundWatchApi}.execute-api.${AWS::Region}.amazonaws.com/${Stage}/"
+  BucketName:
+    Value: !Ref FundWatchBucket
+  TableName:
+    Value: !Ref FundWatchTable
+  StateMachineArn:
+    Value: !Ref FundWatchStateMachine

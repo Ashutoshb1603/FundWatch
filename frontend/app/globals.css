@@ -1,0 +1,25 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url("https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600;8..60,700&family=IBM+Plex+Mono:wght@400;500;600&display=swap");
+
+html, body {
+  background-color: #0F1B2B;
+  color: #F6F3EC;
+}
+
+::selection {
+  background: #C9A227;
+  color: #0F1B2B;
+}
+
+.evidence-tag {
+  font-family: 'IBM Plex Mono', monospace;
+  letter-spacing: 0.02em;
+}
+
+.ledger-rule {
+  background-image: linear-gradient(to right, #26364B 1px, transparent 1px);
+  background-size: 24px 1px;
+}

@@ -1,0 +1,218 @@
+{
+  "Comment": "FundWatch analysis workflow",
+  "StartAt": "MarkExtracting",
+  "States": {
+    "MarkExtracting": {
+      "Type": "Task",
+      "Resource": "${StatusFunctionArn}",
+      "Parameters": {"scan_id.$": "$.scan_id", "status": "processing", "step": "extract_text_tables"},
+      "ResultPath": null,
+      "Next": "ExtractBoth",
+      "Catch": [{"ErrorEquals": ["States.ALL"], "Next": "MarkFailed"}]
+    },
+    "ExtractBoth": {
+      "Type": "Parallel",
+      "Branches": [
+        {
+          "StartAt": "ExtractPrevious",
+          "States": {
+            "ExtractPrevious": {
+              "Type": "Task",
+              "Resource": "${ExtractFunctionArn}",
+              "Parameters": {"scan_id.$": "$.scan_id", "bucket.$": "$.previous.bucket", "key.$": "$.previous.key", "document_id.$": "$.previous.document_id"},
+              "Retry": [{"ErrorEquals": ["States.ALL"], "MaxAttempts": 2, "IntervalSeconds": 3}],
+              "End": true
+            }
+          }
+        },
+        {
+          "StartAt": "ExtractCurrent",
+          "States": {
+            "ExtractCurrent": {
+              "Type": "Task",
+              "Resource": "${ExtractFunctionArn}",
+              "Parameters": {"scan_id.$": "$.scan_id", "bucket.$": "$.current.bucket", "key.$": "$.current.key", "document_id.$": "$.current.document_id"},
+              "Retry": [{"ErrorEquals": ["States.ALL"], "MaxAttempts": 2, "IntervalSeconds": 3}],
+              "End": true
+            }
+          }
+        }
+      ],
+      "ResultSelector": {"previous.$": "$[0]", "current.$": "$[1]"},
+      "ResultPath": "$.extractions",
+      "Next": "MarkNormalizing",
+      "Catch": [{"ErrorEquals": ["States.ALL"], "Next": "MarkFailed"}]
+    },
+    "MarkNormalizing": {
+      "Type": "Task",
+      "Resource": "${StatusFunctionArn}",
+      "Parameters": {"scan_id.$": "$.scan_id", "status": "processing", "step": "normalize_factsheets"},
+      "ResultPath": null,
+      "Next": "NormalizeBoth"
+    },
+    "NormalizeBoth": {
+      "Type": "Parallel",
+      "Branches": [
+        {
+          "StartAt": "NormalizePrevious",
+          "States": {
+            "NormalizePrevious": {
+              "Type": "Task",
+              "Resource": "${NormalizeFunctionArn}",
+              "Parameters": {"scan_id.$": "$.scan_id", "bucket.$": "$.extractions.previous.bucket", "extracted_key.$": "$.extractions.previous.extracted_key", "document_id.$": "$.extractions.previous.document_id", "scheme_name_hint.$": "$.scheme_name_hint"},
+              "End": true
+            }
+          }
+        },
+        {
+          "StartAt": "NormalizeCurrent",
+          "States": {
+            "NormalizeCurrent": {
+              "Type": "Task",
+              "Resource": "${NormalizeFunctionArn}",
+              "Parameters": {"scan_id.$": "$.scan_id", "bucket.$": "$.extractions.current.bucket", "extracted_key.$": "$.extractions.current.extracted_key", "document_id.$": "$.extractions.current.document_id", "scheme_name_hint.$": "$.scheme_name_hint"},
+              "End": true
+            }
+          }
+        }
+      ],
+      "ResultSelector": {"previous.$": "$[0]", "current.$": "$[1]"},
+      "ResultPath": "$.normalized",
+      "Next": "MarkValidating",
+      "Catch": [{"ErrorEquals": ["States.ALL"], "Next": "MarkFailed"}]
+    },
+    "MarkValidating": {
+      "Type": "Task",
+      "Resource": "${StatusFunctionArn}",
+      "Parameters": {"scan_id.$": "$.scan_id", "status": "processing", "step": "validate_fund_identity"},
+      "ResultPath": null,
+      "Next": "ValidateFundIdentity"
+    },
+    "ValidateFundIdentity": {
+      "Type": "Task",
+      "Resource": "${ValidateFunctionArn}",
+      "Parameters": {
+        "scan_id.$": "$.scan_id",
+        "bucket.$": "$.normalized.previous.bucket",
+        "previous_normalized_key.$": "$.normalized.previous.normalized_key",
+        "current_normalized_key.$": "$.normalized.current.normalized_key"
+      },
+      "ResultPath": "$.validation",
+      "Next": "CanProceed",
+      "Catch": [{"ErrorEquals": ["States.ALL"], "Next": "MarkFailed"}]
+    },
+    "CanProceed": {
+      "Type": "Choice",
+      "Choices": [{"Variable": "$.validation.can_proceed", "BooleanEquals": true, "Next": "MarkComparing"}],
+      "Default": "MarkValidationFailed"
+    },
+    "MarkValidationFailed": {
+      "Type": "Task",
+      "Resource": "${StatusFunctionArn}",
+      "Parameters": {
+        "scan_id.$": "$.scan_id",
+        "status": "validation_failed",
+        "step": "validate_fund_identity",
+        "detail": "Documents are not safely comparable.",
+        "extra": {"validation.$": "$.validation"}
+      },
+      "ResultPath": null,
+      "Next": "ValidationFailed"
+    },
+    "ValidationFailed": {"Type": "Pass", "End": true},
+    "MarkComparing": {
+      "Type": "Task",
+      "Resource": "${StatusFunctionArn}",
+      "Parameters": {"scan_id.$": "$.scan_id", "status": "processing", "step": "compare_data"},
+      "ResultPath": null,
+      "Next": "CompareData"
+    },
+    "CompareData": {
+      "Type": "Task",
+      "Resource": "${CompareFunctionArn}",
+      "Parameters": {
+        "scan_id.$": "$.scan_id",
+        "bucket.$": "$.normalized.previous.bucket",
+        "previous_normalized_key.$": "$.normalized.previous.normalized_key",
+        "current_normalized_key.$": "$.normalized.current.normalized_key"
+      },
+      "ResultPath": "$.comparison",
+      "Next": "MarkExplaining",
+      "Catch": [{"ErrorEquals": ["States.ALL"], "Next": "MarkFailed"}]
+    },
+    "MarkExplaining": {
+      "Type": "Task",
+      "Resource": "${StatusFunctionArn}",
+      "Parameters": {"scan_id.$": "$.scan_id", "status": "processing", "step": "generate_explanations"},
+      "ResultPath": null,
+      "Next": "GenerateExplanations"
+    },
+    "GenerateExplanations": {
+      "Type": "Task",
+      "Resource": "${ExplainFunctionArn}",
+      "Parameters": {"scan_id.$": "$.scan_id", "bucket.$": "$.comparison.bucket", "findings_key.$": "$.comparison.findings_key"},
+      "Retry": [{"ErrorEquals": ["States.ALL"], "MaxAttempts": 1}],
+      "ResultPath": "$.explanations",
+      "Catch": [{"ErrorEquals": ["States.ALL"], "ResultPath": "$.explain_error", "Next": "SelectBriefFindingsKey"}],
+      "Next": "SelectBriefFindingsKey"
+    },
+    "SelectBriefFindingsKey": {
+      "Type": "Choice",
+      "Choices": [{"Variable": "$.explanations.findings_key", "IsPresent": true, "Next": "SetExplainedFindingsKey"}],
+      "Default": "SetDeterministicFindingsKey"
+    },
+    "SetExplainedFindingsKey": {
+      "Type": "Pass",
+      "Parameters": {"brief_findings_key.$": "$.explanations.findings_key"},
+      "ResultPath": "$.brief_context",
+      "Next": "MarkBriefing"
+    },
+    "SetDeterministicFindingsKey": {
+      "Type": "Pass",
+      "Parameters": {"brief_findings_key.$": "$.comparison.findings_key"},
+      "ResultPath": "$.brief_context",
+      "Next": "MarkBriefing"
+    },
+    "MarkBriefing": {
+      "Type": "Task",
+      "Resource": "${StatusFunctionArn}",
+      "Parameters": {"scan_id.$": "$.scan_id", "status": "processing", "step": "generate_analyst_brief"},
+      "ResultPath": null,
+      "Next": "GenerateAnalystBrief"
+    },
+    "GenerateAnalystBrief": {
+      "Type": "Task",
+      "Resource": "${BriefFunctionArn}",
+      "Parameters": {
+        "scan_id.$": "$.scan_id",
+        "bucket.$": "$.comparison.bucket",
+        "findings_key.$": "$.brief_context.brief_findings_key",
+        "current_normalized_key.$": "$.normalized.current.normalized_key",
+        "previous_normalized_key.$": "$.normalized.previous.normalized_key",
+        "validation.$": "$.validation"
+      },
+      "Retry": [{"ErrorEquals": ["States.ALL"], "MaxAttempts": 1}],
+      "ResultPath": "$.brief",
+      "Catch": [{"ErrorEquals": ["States.ALL"], "Next": "MarkFailed"}],
+      "Next": "ReturnCompletedScan"
+    },
+    "ReturnCompletedScan": {
+      "Type": "Pass",
+      "Next": "MarkCompleted"
+    },
+    "MarkCompleted": {
+      "Type": "Task",
+      "Resource": "${StatusFunctionArn}",
+      "Parameters": {"scan_id.$": "$.scan_id", "status": "completed", "step": "completed"},
+      "ResultPath": null,
+      "End": true
+    },
+    "MarkFailed": {
+      "Type": "Task",
+      "Resource": "${StatusFunctionArn}",
+      "Parameters": {"scan_id.$": "$.scan_id", "status": "error", "step": "error", "detail": "Analysis pipeline failed."},
+      "ResultPath": null,
+      "End": true
+    }
+  }
+}
