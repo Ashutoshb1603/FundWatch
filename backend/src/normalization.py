@@ -16,7 +16,7 @@ from __future__ import annotations
 import re
 from datetime import datetime
 
-from .extraction.extractor import ExtractionOutcome
+from .extraction.pdf_parser import find_field, looks_like_percent, parse_holdings_block
 from .extraction.pdf_parser import find_field
 from .schema import (
     ConfidenceLevel,
@@ -88,8 +88,13 @@ def _find_plan_option(text: str) -> tuple[str | None, str | None]:
 
 
 def _find_fund_managers(text: str) -> list[str]:
+    # Anchor on the real "Name / Since / Total Exp" table header, not just the
+    # literal words "fund manager" — a table-of-contents page ("Performance
+    # details of schemes managed by respective fund managers....108") also
+    # contains that phrase and was winning the plain substring search.
     m = re.search(
-        r"Fund Manager[s]?\b(.*?)(?=DATE OF ALLOTMENT|INCEPTION DATE|NAV\b|ASSETS UNDER MANAGEMENT|PORTFOLIO|SECTOR ALLOCATION|QUANTITATIVE DATA)",
+        r"FUND MANAGER[S]?\s*.{0,10}?\s*Name\s*Since\s*Total\s*Exp\s*"
+        r"(.*?)(?=DATE OF ALLOTMENT|INCEPTION DATE|NAV\b|ASSETS UNDER MANAGEMENT|PORTFOLIO|SECTOR ALLOCATION|QUANTITATIVE DATA)",
         text,
         re.IGNORECASE | re.DOTALL,
     )
@@ -311,6 +316,8 @@ def _find_riskometer(text: str) -> str | None:
 
 def normalize(outcome: ExtractionOutcome, scheme_name_hint: str | None = None) -> FundSnapshot:
     doc = _focus_document(outcome.primary, scheme_name_hint)
+
+
     text = doc.full_text
     warnings: list[str] = list(outcome.notes)
 
@@ -322,7 +329,11 @@ def normalize(outcome: ExtractionOutcome, scheme_name_hint: str | None = None) -
         period=period_text,
         period_sort_key=_period_sort_key(period_text),
     )
-    fund.plan, fund.option = _find_plan_option(text)
+    # NOTE: plan/option intentionally left unset. In a combined multi-scheme
+    # factsheet the NAV block lists all plan/option combinations together
+    # (Regular Growth, Regular IDCW, Direct Growth, Direct IDCW) on the same
+    # scheme page, so "first Direct/Regular match" is not a reliable signal
+    # and was causing spurious "Plan differs" validation failures.
     if not fund.scheme_name:
         warnings.append("Could not confidently detect scheme name.")
     if not fund.period:
@@ -373,40 +384,39 @@ def normalize(outcome: ExtractionOutcome, scheme_name_hint: str | None = None) -
             document_id=outcome.document_id, page_number=page, confidence=outcome.confidence, raw_snippet=_snippet(text, "Fund Manager")
         )
 
+    seen_holdings: set[str] = set()
     for page in doc.pages:
-        for table in page.tables:
-            header_text = " ".join(str(c) for c in (table[0] if table else []) if c).lower()
-            if any(k in header_text for k in ("company", "holding", "instrument")):
-                for name, weight, industry in _parse_holdings_table(table):
-                    snapshot.holdings.append(
-                        Holding(
-                            company=name,
-                            weight=weight,
-                            sector=industry,
-                            source=SourceRef(
-                                document_id=outcome.document_id,
-                                page_number=page.page_number,
-                                extraction_method="table",
-                                confidence=outcome.confidence,
-                                raw_snippet=" | ".join(str(c) for c in next((r for r in table[1:] if r and name in " ".join(str(x or "") for x in r)), [])),
-                            ),
-                        )
+        for block_text in page.blocks:
+            lines = [l for l in block_text.split("\n") if l.strip()]
+            # A holdings column has several "% NAV" style lines in a row;
+            # anything with fewer than 3 isn't a holdings block (skips
+            # stray fragments like a 2-line footnote or a turnover ratio box).
+            # It also actually lists companies — this second check is what
+            # keeps SIP-performance and NAV-history tables (which also have
+            # several decimal-looking lines) from being misread as holdings.
+            if sum(1 for l in lines if looks_like_percent(l)) < 3:
+                continue
+            if not re.search(r"\bltd\b|\blimited\b|\breit\b|\binvit\b", block_text, re.IGNORECASE):
+                continue
+            for name, sector, weight in parse_holdings_block(block_text):
+                key = name.strip().lower()
+                if key in seen_holdings:
+                    continue  # same block can be picked up once per page; don't double count
+                seen_holdings.add(key)
+                snapshot.holdings.append(
+                    Holding(
+                        company=name,
+                        weight=weight,
+                        sector=sector,
+                        source=SourceRef(
+                            document_id=outcome.document_id,
+                            page_number=page.page_number,
+                            extraction_method="text_block",
+                            confidence=outcome.confidence,
+                            raw_snippet=f"{name} | {sector or ''} | {weight}",
+                        ),
                     )
-            elif any(k in header_text for k in ("sector", "industry")):
-                for name, weight in _parse_sector_table(table):
-                    snapshot.sectors.append(
-                        SectorAllocation(
-                            sector=name,
-                            weight=weight,
-                            source=SourceRef(
-                                document_id=outcome.document_id,
-                                page_number=page.page_number,
-                                extraction_method="table",
-                                confidence=outcome.confidence,
-                                raw_snippet=" | ".join(str(c) for c in next((r for r in table[1:] if r and name in " ".join(str(x or "") for x in r)), [])),
-                            ),
-                        )
-                    )
+                )
 
     if not snapshot.sectors and snapshot.holdings:
         # Some AMCs publish industry/sector allocation as a chart rather than a

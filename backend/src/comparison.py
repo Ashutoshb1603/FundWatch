@@ -39,6 +39,8 @@ def compare_holdings(
         curr_h = curr_by_name.get(name)
 
         if prev_h is None and curr_h is not None:
+            if curr_h.weight is None:
+                continue 
             findings.append(
                 Finding(
                     change_type=ChangeType.HOLDING_NEW,
@@ -65,6 +67,8 @@ def compare_holdings(
             continue
 
         if curr_h is None and prev_h is not None:
+            if prev_h.weight is None:
+                continue 
             findings.append(
                 Finding(
                     change_type=ChangeType.HOLDING_EXITED,

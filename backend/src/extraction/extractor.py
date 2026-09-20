@@ -26,18 +26,46 @@ class ExtractionOutcome:
     notes: list[str]
 
 
+
 def score_confidence(doc: ExtractedDocument) -> ConfidenceLevel:
     if doc.parse_error:
         return ConfidenceLevel.LOW
-    text = doc.full_text.lower()
-    if not text.strip():
+
+    text = doc.full_text.lower().strip()
+    if not text:
         return ConfidenceLevel.LOW
-    signal_hits = sum(1 for s in REQUIRED_SIGNALS if s in text)
-    table_count = sum(len(p.tables) for p in doc.pages)
-    if signal_hits >= 3 and table_count > 0:
+
+    # Check for evidence of actual portfolio data, not just generic words.
+    has_scheme_context = "scheme" in text
+    has_holding_context = any(
+        term in text
+        for term in ["equity holding", "portfolio", "top 10 holdings"]
+    )
+    has_sector_context = any(
+        term in text
+        for term in ["sector allocation", "industry allocation", "sector-wise"]
+    )
+    has_percentage = "%" in text
+
+    # Count actual extracted table rows, rather than all text blocks.
+    table_count = sum(
+        len(page.tables)
+        for page in doc.pages
+    )
+
+    signals = sum([
+        has_scheme_context,
+        has_holding_context,
+        has_sector_context,
+        has_percentage,
+    ])
+
+    if signals >= 3 and table_count > 0:
         return ConfidenceLevel.HIGH
-    if signal_hits >= 2:
+
+    if signals >= 2:
         return ConfidenceLevel.MEDIUM
+
     return ConfidenceLevel.LOW
 
 
