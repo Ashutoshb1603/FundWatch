@@ -1,26 +1,26 @@
 /** @type {import('tailwindcss').Config} */
 module.exports = {
-  content: ["./app/**/*.{ts,tsx}", "./components/**/*.{ts,tsx}"],
+  content: ["./app/**/*.{ts,tsx}", "./components/**/*.{ts,tsx}", "./lib/**/*.{ts,tsx}"],
   theme: {
     extend: {
       colors: {
-        ink: {
-          DEFAULT: "#0F1B2B",
-          light: "#16273D",
-          border: "#26364B",
-        },
-        paper: "#F6F3EC",
-        gold: "#C9A227",
-        teal: "#4F8F82",
-        rust: "#B0503A",
-        slate: {
-          400: "#8B96A5",
-          500: "#6B7280",
-        },
+        surface: "#FAF8F4",
+        panel: "#FFFFFF",
+        rule: "#E4DFD5",
+        ink: "#1B1B18",
+        muted: "#6B675D",
+        accent: { DEFAULT: "#1F5C4D", soft: "#E6EFEC", deep: "#143F35" },
+        gold: "#D9A441",
+        up: "#1F6F4A",
+        down: "#A8412C",
+        high: "#B4472F",
+        medium: "#B7791F",
+        low: "#9A968B",
       },
       fontFamily: {
-        serif: ["'Source Serif 4'", "Georgia", "serif"],
-        mono: ["'IBM Plex Mono'", "ui-monospace", "monospace"],
+        sans: ["Inter Variable", "system-ui", "sans-serif"],
+        serif: ["Source Serif 4 Variable", "Georgia", "serif"],
+        mono: ["IBM Plex Mono", "ui-monospace", "monospace"],
       },
     },
   },

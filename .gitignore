@@ -17,6 +17,8 @@ venv/
 
 # Frontend dependencies and builds
 node_modules/
+.next/
+*.tsbuildinfo
 dist/
 build/
 

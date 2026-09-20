@@ -1,116 +1,134 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Finding, ScanResult } from "@/lib/types";
-import ChangeCard from "./ChangeCard";
+import { Finding, Priority, ScanResult } from "@/lib/types";
+import { CATEGORIES, PRIORITY_RANK, categoryOf, magnitude } from "@/lib/format";
+import HeroBand from "./HeroBand";
+import KeyMetrics from "./KeyMetrics";
+import MoversChart from "./MoversChart";
+import FilterRail, { SortKey } from "./FilterRail";
+import FindingsTable from "./FindingsTable";
 import EvidenceDrawer from "./EvidenceDrawer";
 import AnalystBriefPanel from "./AnalystBriefPanel";
 import AnalystChat from "./AnalystChat";
-
-const SECTIONS: { key: string; title: string; types: string[] }[] = [
-  {
-    key: "portfolio",
-    title: "Portfolio",
-    types: ["holding_new", "holding_exited", "holding_weight_change", "top10_entry", "top10_exit"],
-  },
-  { key: "sectors", title: "Sectors", types: ["sector_weight_change"] },
-  { key: "fund", title: "Fund-level metrics", types: ["aum_change", "expense_ratio_change"] },
-  { key: "risk", title: "Risk / management", types: ["riskometer_change", "fund_manager_change"] },
-];
+import StateNotice from "./StateNotice";
 
 export default function Dashboard({ result, onStartOver }: { result: ScanResult; onStartOver: () => void }) {
-  const [activeEvidence, setActiveEvidence] = useState<Finding | null>(null);
-  const [tab, setTab] = useState<string>("portfolio");
+  const [category, setCategory] = useState("all");
+  const [priorities, setPriorities] = useState<Set<Priority>>(new Set(["HIGH", "MEDIUM", "LOW"]));
+  const [sort, setSort] = useState<SortKey>("priority");
+  const [openFinding, setOpenFinding] = useState<Finding | null>(null);
+  const [dismissed, setDismissed] = useState(false);
 
-  const grouped = useMemo(() => {
-    const map: Record<string, Finding[]> = {};
-    for (const s of SECTIONS) map[s.key] = [];
-    for (const f of result.findings) {
-      const section = SECTIONS.find((s) => s.types.includes(f.change_type));
-      if (section) map[section.key].push(f);
-    }
-    return map;
+  const counts = useMemo(() => {
+    const c: Record<string, number> = {};
+    for (const f of result.findings) c[categoryOf(f)] = (c[categoryOf(f)] ?? 0) + 1;
+    return c;
   }, [result.findings]);
 
-  return (
-    <div className="mx-auto max-w-5xl pb-20">
-      <div className="flex items-start justify-between">
-        <div>
-          <div className="evidence-tag text-xs uppercase tracking-widest text-gold">FundWatch</div>
-          <h1 className="mt-2 font-serif text-3xl text-paper">
-            {result.fund.scheme_name || "Fund comparison"}
-          </h1>
-          <div className="mt-1 font-mono text-sm text-slate-400">
-            {result.fund.previous_period || "Previous period"} → {result.fund.current_period || "Current period"}
-          </div>
-        </div>
-        <div className="text-right">
-          <div className="font-mono text-3xl text-gold">{result.material_change_count}</div>
-          <div className="evidence-tag text-xs uppercase tracking-widest text-slate-500">Material Changes</div>
-        </div>
-      </div>
+  const visible = useMemo(() => {
+    const list = result.findings.filter(
+      (f) => (category === "all" || categoryOf(f) === category) && priorities.has(f.priority)
+    );
+    return [...list].sort((a, b) =>
+      sort === "priority"
+        ? PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority] || magnitude(b) - magnitude(a)
+        : magnitude(b) - magnitude(a)
+    );
+  }, [result.findings, category, priorities, sort]);
 
-      {result.validation && result.validation.issues.length > 0 && (
-        <div className="mt-6 rounded-sm border border-gold/40 bg-gold/5 px-4 py-3 text-sm text-gold">
-          {result.validation.issues.map((issue, i) => (
-            <div key={i}>{issue}</div>
-          ))}
+  function togglePriority(p: Priority) {
+    setPriorities((prev) => {
+      const next = new Set(prev);
+      if (next.has(p)) next.delete(p);
+      else next.add(p);
+      return next;
+    });
+  }
+
+  // Evidence navigation follows the visible table; a finding opened from elsewhere (KPI card, chart) stands alone.
+  const evidenceList = openFinding && visible.includes(openFinding) ? visible : openFinding ? [openFinding] : [];
+  const openIdx = openFinding ? evidenceList.indexOf(openFinding) : -1;
+
+  const issues = result.validation?.issues ?? [];
+  const extractionWarnings = [...(result.extraction.previous_warnings ?? []), ...(result.extraction.current_warnings ?? [])];
+  const activeTitle = category === "all" ? "All changes" : CATEGORIES.find((c) => c.key === category)?.title;
+
+  return (
+    <div className="fade-up pb-24">
+      <HeroBand result={result} onStartOver={onStartOver} />
+      <div className="mx-auto max-w-6xl px-5 sm:px-8">
+      <KeyMetrics findings={result.findings} onOpen={setOpenFinding} />
+
+      {!dismissed && (issues.length > 0 || extractionWarnings.length > 0) && (
+        <div className="mt-6">
+          <StateNotice
+            tone="warning"
+            title="Check before relying on these results"
+            action={{ label: "Dismiss", onClick: () => setDismissed(true) }}
+          >
+            <ul className="list-disc space-y-0.5 pl-5">
+              {[...issues, ...extractionWarnings].map((m, i) => (
+                <li key={i}>{m}</li>
+              ))}
+            </ul>
+          </StateNotice>
         </div>
       )}
 
-      <div className="mt-8 flex flex-wrap gap-2 border-b border-ink-border pb-1">
-        {SECTIONS.map((s) => (
-          <button
-            key={s.key}
-            onClick={() => setTab(s.key)}
-            className={`evidence-tag rounded-sm px-3 py-2 text-xs uppercase tracking-widest ${
-              tab === s.key ? "border-b-2 border-gold text-paper" : "text-slate-500 hover:text-slate-300"
-            }`}
-          >
-            {s.title} ({grouped[s.key]?.length ?? 0})
-          </button>
-        ))}
-        <button
-          onClick={() => setTab("brief")}
-          className={`evidence-tag rounded-sm px-3 py-2 text-xs uppercase tracking-widest ${
-            tab === "brief" ? "border-b-2 border-gold text-paper" : "text-slate-500 hover:text-slate-300"
-          }`}
-        >
-          Analyst Brief
-        </button>
-      </div>
+      {result.brief && (
+        <div className="mt-6">
+          <AnalystBriefPanel brief={result.brief} />
+        </div>
+      )}
 
-      <div className="mt-6">
-        {tab !== "brief" ? (
-          grouped[tab]?.length ? (
-            <div className="grid gap-4 sm:grid-cols-2">
-              {grouped[tab].map((f, i) => (
-                <ChangeCard key={i} finding={f} onViewEvidence={setActiveEvidence} />
-              ))}
-            </div>
+      <div className="mt-10 grid gap-8 lg:grid-cols-[210px_1fr]">
+        <FilterRail
+          counts={counts}
+          total={result.findings.length}
+          category={category}
+          onCategory={setCategory}
+          priorities={priorities}
+          onTogglePriority={togglePriority}
+          sort={sort}
+          onSort={setSort}
+        />
+
+        <div className="min-w-0">
+          <MoversChart findings={result.findings} onOpen={setOpenFinding} />
+
+          <div className="mb-3 mt-10 flex items-baseline justify-between">
+            <h2 className="font-serif text-xl font-semibold">{activeTitle}</h2>
+            <span className="num text-xs text-muted">{visible.length} shown</span>
+          </div>
+
+          {visible.length ? (
+            <FindingsTable findings={visible} onOpen={setOpenFinding} />
           ) : (
-            <div className="rounded-sm border border-dashed border-ink-border p-8 text-center text-sm text-slate-500">
-              No material changes detected in this category.
+            <div className="rounded border border-dashed border-rule bg-panel px-6 py-12 text-center">
+              <p className="font-medium">No material changes here</p>
+              <p className="mt-1 text-sm text-muted">
+                {result.findings.length
+                  ? "Nothing matches the current filters. Try widening the priority filter."
+                  : "Nothing crossed the materiality thresholds between these two factsheets."}
+              </p>
             </div>
-          )
-        ) : result.brief ? (
-          <div className="space-y-6">
-            <AnalystBriefPanel brief={result.brief} />
+          )}
+
+          <div className="mt-10">
             <AnalystChat scanId={result.scan_id} />
           </div>
-        ) : (
-          <div className="text-sm text-slate-500">Brief not available.</div>
-        )}
+        </div>
       </div>
 
-      <button
-        onClick={onStartOver}
-        className="mt-10 evidence-tag text-xs uppercase tracking-widest text-slate-500 hover:text-gold"
-      >
-        ← Analyze another pair
-      </button>
-
-      <EvidenceDrawer finding={activeEvidence} onClose={() => setActiveEvidence(null)} />
+      <EvidenceDrawer
+        finding={openFinding}
+        position={openFinding ? { index: openIdx, total: evidenceList.length } : null}
+        onPrev={() => openIdx > 0 && setOpenFinding(evidenceList[openIdx - 1])}
+        onNext={() => openIdx < evidenceList.length - 1 && setOpenFinding(evidenceList[openIdx + 1])}
+        onClose={() => setOpenFinding(null)}
+      />
+      </div>
     </div>
   );
 }
