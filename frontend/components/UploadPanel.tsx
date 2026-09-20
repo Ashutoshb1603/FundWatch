@@ -126,6 +126,7 @@ export default function UploadPanel({
       const s = await loadSample();
       setPrevious(s.previous);
       setCurrent(s.current);
+      setSchemeName((n) => n.trim() || "HDFC Flexi Cap Fund");
     } catch (e: any) {
       setLocalError(e.message || "Could not load the sample factsheets.");
     } finally {
@@ -134,7 +135,7 @@ export default function UploadPanel({
   }
 
   const shownError = localError || error;
-  const ready = !!previous && !!current && !loading;
+  const ready = !!previous && !!current && !!schemeName.trim() && !loading;
 
   return (
     <>
@@ -185,7 +186,7 @@ export default function UploadPanel({
 
         <div className="mt-6">
           <label htmlFor="scheme" className="text-sm font-medium">
-            Scheme name <span className="font-normal text-muted">(optional)</span>
+            Scheme name <span className="font-normal text-muted">(required)</span>
           </label>
           <input
             id="scheme"
@@ -195,7 +196,7 @@ export default function UploadPanel({
             className="mt-1.5 w-full rounded border border-rule bg-panel px-3 py-2.5 text-sm placeholder:text-muted/60"
           />
           <p className="mt-1.5 text-xs text-muted">
-            Recommended when the PDF covers several schemes, so extraction focuses on the right pages.
+            Needed because the PDF covers several schemes, so extraction focuses on the right pages.
           </p>
         </div>
 
@@ -215,7 +216,7 @@ export default function UploadPanel({
           {loading ? "Analyzing…" : "Compare factsheets"}
         </button>
         {!ready && !loading && (
-          <p className="mt-2 text-center text-xs text-muted">Add both factsheets to continue.</p>
+          <p className="mt-2 text-center text-xs text-muted">Add both factsheets and the scheme name to continue.</p>
         )}
       </div>
     </div>

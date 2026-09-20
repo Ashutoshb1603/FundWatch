@@ -28,7 +28,7 @@ export default function HeroBand({ result, onStartOver }: { result: ScanResult; 
       }}
     >
       {/* Document motif, cropped by the band edge */}
-      <div aria-hidden className="pointer-events-none absolute -bottom-24 right-4 hidden w-[520px] lg:block xl:right-24">
+      <div aria-hidden className="pointer-events-none absolute -bottom-24 right-4 hidden w-[520px] xl:right-24 xl:block">
         <div className="float-b absolute right-0 top-0 w-[210px] opacity-95">
           <DocPage />
         </div>

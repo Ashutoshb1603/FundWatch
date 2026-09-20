@@ -12,7 +12,7 @@ const METRICS: { type: string; title: string; unchanged: string }[] = [
 
 export default function KeyMetrics({ findings, onOpen }: { findings: Finding[]; onOpen: (f: Finding) => void }) {
   return (
-    <section aria-label="Key fund metrics" className="-mt-16 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+    <section aria-label="Key fund metrics" className="relative z-10 -mt-16 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
       {METRICS.map((m) => {
         const f = findings.find((x) => x.change_type === m.type);
         const d = f ? describe(f) : null;
