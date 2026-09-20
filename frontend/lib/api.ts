@@ -11,8 +11,8 @@ type PresignResponse = {
 
 /** True when talking to the deployed API Gateway (real step reports); false for the local FastAPI server. */
 export function isAwsMode() {
-  const base = process.env.NEXT_PUBLIC_API_BASE_URL;
-  return !!base && !base.includes("localhost");
+  // Explicit opt-in: any non-localhost URL (e.g. App Runner) still speaks the FastAPI /api protocol.
+  return process.env.NEXT_PUBLIC_API_MODE === "aws";
 }
 
 async function jsonOrThrow(res: Response) {
