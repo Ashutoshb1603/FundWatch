@@ -9,6 +9,12 @@ type PresignResponse = {
   max_bytes: number;
 };
 
+/** True when talking to the deployed API Gateway (real step reports); false for the local FastAPI server. */
+export function isAwsMode() {
+  const base = process.env.NEXT_PUBLIC_API_BASE_URL;
+  return !!base && !base.includes("localhost");
+}
+
 async function jsonOrThrow(res: Response) {
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(body.error || body.detail || `Request failed (${res.status})`);
@@ -18,7 +24,7 @@ async function jsonOrThrow(res: Response) {
 export async function analyzeFactsheets(previous: File, current: File, schemeName?: string, onProgress?: (step: string) => void): Promise<ScanResult> {
   // AWS path: request presigned S3 URLs, upload PDFs directly to S3,
   // then start the asynchronous scan and poll until completion.
-  if (process.env.NEXT_PUBLIC_API_BASE_URL && !process.env.NEXT_PUBLIC_API_BASE_URL.includes("localhost")) {
+  if (isAwsMode()) {
     const presign = (await jsonOrThrow(await fetch(`${BASE_URL}/uploads/presign`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -77,7 +83,8 @@ async function pollScan(scanId: string, onProgress?: (step: string) => void): Pr
 }
 
 export async function askAnalystChat(scanId: string, question: string) {
-  const res = await fetch(`${BASE_URL}/scans/${scanId}/chat`, {
+  // Local FastAPI serves under /api; the deployed API Gateway routes are unprefixed.
+  const res = await fetch(`${BASE_URL}${isAwsMode() ? "" : "/api"}/scans/${scanId}/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ question }),
