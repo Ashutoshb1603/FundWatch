@@ -109,7 +109,7 @@ async def chat(scan_id: str, req: ChatRequest):
         return {
             "available": False,
             "answer": (
-                "The analyst chat needs Amazon Bedrock, which isn't reachable right now. "
+                "The analyst chat needs an LLM provider (Amazon Bedrock or Groq), which isn't reachable right now."
                 "You can still browse the findings, evidence, and analyst brief above."
             ),
         }

@@ -63,6 +63,13 @@ calls simply report themselves as unavailable if you have no AWS
 credentials configured, and the app degrades exactly as the product spec
 requires.
 
+**LLM provider without AWS:** copy `backend/.env.example` to `backend/.env`
+and set `GROQ_API_KEY` (free tier). When no AWS credentials are found the
+backend uses Groq (`GROQ_MODEL`, default `openai/gpt-oss-120b`) with the same
+grounded prompts; `LLM_PROVIDER=bedrock|groq` forces one. Free-tier rate
+limits are handled by sending compacted findings (top 15 to the brief, top 30
+to chat), explaining only the top 6 findings, and retrying on HTTP 429.
+
 **Backend**
 ```bash
 cd backend

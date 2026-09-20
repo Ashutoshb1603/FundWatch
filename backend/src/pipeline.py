@@ -131,8 +131,14 @@ def run_pipeline(
 
         if generate_explanations and use_bedrock:
             _log(result, "generate_explanations", "running")
-            for f in findings:
-                resp = explain_finding(f.to_dict())
+            from concurrent.futures import ThreadPoolExecutor
+
+            # Explain only the top-priority findings (already ranked); the rest keep
+            # their deterministic values/evidence. Keeps latency and rate limits sane.
+            top = findings[:6]
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                responses = list(pool.map(lambda f: explain_finding(f.to_dict()), top))
+            for f, resp in zip(top, responses):
                 if resp.available and resp.text:
                     f.explanation = resp.text
             _log(result, "generate_explanations", "done")
